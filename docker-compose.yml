@@ -5,11 +5,15 @@ services:
     container_name: iridium-web
     restart: unless-stopped
     ports:
-      # Bound to loopback ONLY: nginx reverse-proxies to it over TLS, so the
-      # container must not be reachable from the internet. Publishing this as
-      # "8890:8899" would expose the console on plain HTTP and bypass nginx —
-      # note that Docker writes its own iptables rules, so a published port is
-      # reachable even when ufw says the port is closed.
+      # Loopback ONLY, and only so you can curl it from the host while
+      # debugging. The reverse proxy does NOT use this — if the proxy runs in a
+      # container it cannot reach the host's 127.0.0.1 at all; it talks to
+      # iridium-web:8899 over the shared network below.
+      #
+      # Never change this to "8890:8899". Docker writes its own iptables rules,
+      # so a published port is reachable from the internet even when the host
+      # firewall says it is closed — that would put the console on plain HTTP
+      # and bypass TLS entirely. Deleting these two lines is also fine.
       - "127.0.0.1:8890:8899"
     environment:
       # Values come from a .env file beside this one, or from Portainer's stack
@@ -30,6 +34,19 @@ services:
       ROCKBLOCK_IMEI: "${ROCKBLOCK_IMEI:-}"
     volumes:
       - iridium_data:/data
+    networks:
+      - default
+      # Shared network with a FIXED name so a reverse proxy running in another
+      # container can be attached to it without knowing anything about this
+      # stack:  docker network connect iridium_net <proxy-container>
+      # The proxy then reaches this app as  http://iridium-web:8899
+      # (container port — the 8890 host mapping above is only for debugging
+      # from the host itself and is not reachable from another container).
+      - iridium_net
 
 volumes:
   iridium_data:
+
+networks:
+  iridium_net:
+    name: iridium_net
