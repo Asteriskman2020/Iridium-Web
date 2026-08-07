@@ -7,8 +7,13 @@ un-importable.
 """
 import json
 import pathlib
+import sys
 
-TAB = "iridium.tab.1"
+# argv: [label] [id-prefix] [outfile]
+LABEL  = sys.argv[1] if len(sys.argv) > 1 else "Iridium Ground Control"
+PREFIX = sys.argv[2] if len(sys.argv) > 2 else "n"
+OUTFILE = sys.argv[3] if len(sys.argv) > 3 else "iridium-ground-control.json"
+TAB = f"{PREFIX}.tab"
 
 PARSE = r"""
 // Ground Control MO delivery (HTTP_JSON or form-encoded).
@@ -108,7 +113,7 @@ SAMPLE = {
 }
 
 flow = [
-    {"id": TAB, "type": "tab", "label": "Iridium Ground Control",
+    {"id": TAB, "type": "tab", "label": LABEL,
      "disabled": False,
      "info": "Receives Mobile Originated messages from Ground Control "
              "(RockBLOCK / Iridium SBD).\n\n"
@@ -184,6 +189,14 @@ flow = [
      "x": 220, "y": 20, "wires": []},
 ]
 
-out = pathlib.Path(__file__).with_name("iridium-ground-control.json")
+# Re-key every node so two generated flows can coexist in one Node-RED.
+remap = {n["id"]: (n["id"] if n["type"] == "tab" else f"{PREFIX}.{n['id']}")
+         for n in flow}
+for n in flow:
+    n["id"] = remap[n["id"]]
+    if "wires" in n:
+        n["wires"] = [[remap.get(w, w) for w in out_] for out_ in n["wires"]]
+
+out = pathlib.Path(__file__).with_name(OUTFILE)
 out.write_text(json.dumps(flow, indent=2), encoding="utf-8")
-print(f"wrote {out}  ({len(flow)} nodes)")
+print(f"wrote {out}  label={LABEL!r}  ({len(flow)} nodes)")
