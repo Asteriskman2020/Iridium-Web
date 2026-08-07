@@ -5,16 +5,20 @@ services:
     container_name: iridium-web
     restart: unless-stopped
     ports:
-      # Loopback ONLY, and only so you can curl it from the host while
-      # debugging. The reverse proxy does NOT use this — if the proxy runs in a
-      # container it cannot reach the host's 127.0.0.1 at all; it talks to
-      # iridium-web:8899 over the shared network below.
+      # Default 127.0.0.1 = reachable only from the host, for debugging; a
+      # reverse proxy in a container cannot use this and talks to
+      # iridium-web:8899 over the shared network instead.
       #
-      # Never change this to "8890:8899". Docker writes its own iptables rules,
-      # so a published port is reachable from the internet even when the host
-      # firewall says it is closed — that would put the console on plain HTTP
-      # and bypass TLS entirely. Deleting these two lines is also fine.
-      - "127.0.0.1:8890:8899"
+      # Set BIND_ADDR=0.0.0.0 in .env to publish it to the internet. Do that
+      # only deliberately: Docker writes its own iptables rules, so a published
+      # port is reachable even when the host firewall says it is closed, and
+      # without a proxy in front there is no TLS — the console password and the
+      # RockBLOCK credentials would cross the network in clear.
+      #
+      # If you publish it, you MUST also set BEHIND_TLS=false, or the session
+      # cookie is marked Secure, the browser refuses to send it over plain
+      # HTTP, and logging in silently fails with no error message.
+      - "${BIND_ADDR:-127.0.0.1}:${HOST_PORT:-8890}:8899"
     environment:
       # Values come from a .env file beside this one, or from Portainer's stack
       # environment variables — never edited into this file, which is public.
