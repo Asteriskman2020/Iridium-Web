@@ -1,0 +1,31 @@
+services:
+  iridium-web:
+    build: .
+    image: iridium-web:latest
+    container_name: iridium-web
+    restart: unless-stopped
+    ports:
+      # Bound to loopback ONLY: nginx reverse-proxies to it over TLS, so the
+      # container must not be reachable from the internet. Publishing this as
+      # "8890:8899" would expose the console on plain HTTP and bypass nginx —
+      # note that Docker writes its own iptables rules, so a published port is
+      # reachable even when ufw says the port is closed.
+      - "127.0.0.1:8890:8899"
+    environment:
+      # Sessions are invalidated if this changes. Set a real random string.
+      SECRET_KEY: "CHANGE-ME-to-a-long-random-string"
+      # Marks the session cookie Secure — only correct behind TLS.
+      BEHIND_TLS: "true"
+      # First-run console password; changeable afterwards in Settings.
+      ADMIN_PASSWORD: ""
+      DB_PATH: /data/iridium.db
+      # Optional seeds — these can be left empty and filled in via Settings,
+      # which keeps the RockBLOCK password out of the compose file.
+      ROCKBLOCK_USER: ""
+      ROCKBLOCK_PASS: ""
+      ROCKBLOCK_IMEI: ""
+    volumes:
+      - iridium_data:/data
+
+volumes:
+  iridium_data:

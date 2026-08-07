@@ -1,0 +1,6 @@
+Flask==3.0.3
+gunicorn==22.0.0
+requests==2.32.3
+PyJWT==2.9.0
+cryptography==43.0.1
+paho-mqtt==2.1.0

@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Iridium ground station</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         background:#0b1120; color:#e6edf7; }
+  header { display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+           padding:14px 20px; background:#101a2e; border-bottom:1px solid #223049; }
+  header h1 { margin:0; font-size:1.05rem; font-weight:650; }
+  header .imei { font-size:.78rem; color:#8fa3c0; font-family:ui-monospace,monospace; }
+  header .spacer { flex:1; }
+  a.logout { color:#8fa3c0; font-size:.82rem; text-decoration:none; }
+  a.logout:hover { color:#e6edf7; }
+
+  main { max-width:1080px; margin:0 auto; padding:20px; }
+
+  .tabs { display:flex; gap:6px; margin-bottom:18px; flex-wrap:wrap; }
+  .tab { padding:9px 16px; border-radius:8px; border:1px solid #223049;
+         background:#131d31; color:#9cc4ff; cursor:pointer; font-size:.9rem; }
+  .tab.active { background:#2f6feb; border-color:#2f6feb; color:#fff; }
+  .pane { display:none; } .pane.active { display:block; }
+
+  .cards { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); }
+  .card { background:#131d31; border:1px solid #223049; border-radius:12px; padding:14px 16px; }
+  .card .k { font-size:.72rem; color:#8fa3c0; text-transform:uppercase; letter-spacing:.04em; }
+  .card .v { font-size:1.5rem; font-weight:600; margin-top:4px; }
+  .card .s { font-size:.75rem; color:#8fa3c0; margin-top:2px; }
+
+  .panel { background:#131d31; border:1px solid #223049; border-radius:12px;
+           padding:18px; margin-top:16px; }
+  .panel h2 { margin:0 0 12px; font-size:.95rem; color:#9cc4ff; }
+
+  label { display:block; font-size:.8rem; color:#9cc4ff; margin:12px 0 6px; }
+  textarea, input { width:100%; padding:10px 12px; border-radius:8px; font-size:.95rem;
+      border:1px solid #2c3d5c; background:#0d1524; color:#e6edf7;
+      font-family:inherit; }
+  textarea { resize:vertical; min-height:80px; }
+  input:focus, textarea:focus { outline:2px solid #2f6feb; border-color:#2f6feb; }
+  button { padding:11px 18px; border:0; border-radius:8px; background:#2f6feb;
+           color:#fff; font-weight:600; cursor:pointer; font-size:.92rem; }
+  button:hover { background:#4680f5; }
+  button:disabled { background:#31405c; color:#8fa3c0; cursor:not-allowed; }
+  button.ghost { background:#1b2841; color:#9cc4ff; border:1px solid #2c3d5c; }
+
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:14px; }
+  .cc { font-size:.78rem; color:#8fa3c0; }
+  .warn { color:#ffc978; }
+
+  .note { padding:11px 13px; border-radius:8px; font-size:.83rem; margin-top:12px; }
+  .note.info { background:#0f2438; border:1px solid #235272; color:#a8d5ff; }
+  .note.bad  { background:#3b1620; border:1px solid #7d2436; color:#ffb4c0; }
+  .note.good { background:#0f2b1d; border:1px solid #1f6b45; color:#9be3bd; }
+
+  .tblwrap { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; font-size:.85rem; min-width:640px; }
+  th { text-align:left; color:#8fa3c0; font-weight:500; font-size:.75rem;
+       text-transform:uppercase; letter-spacing:.04em; padding:8px 10px;
+       border-bottom:1px solid #223049; }
+  td { padding:9px 10px; border-bottom:1px solid #1a2438; vertical-align:top; }
+  tr:hover td { background:#162034; }
+  .dir { font-weight:600; font-size:.72rem; padding:2px 7px; border-radius:5px; }
+  .dir.MO { background:#0f2b1d; color:#7fd8a8; }
+  .dir.MT { background:#1b2547; color:#9cb6ff; }
+  .msg { font-family:ui-monospace,monospace; word-break:break-word; }
+  .hex { color:#66788f; font-size:.75rem; font-family:ui-monospace,monospace;
+         word-break:break-all; }
+  .fail { color:#ff8fa3; }
+  code { background:#0d1524; padding:2px 6px; border-radius:5px;
+         font-size:.82rem; word-break:break-all; }
+  .muted { color:#8fa3c0; }
+</style>
+</head>
+<body>
+<header>
+  <span style="font-size:1.2rem">🛰️</span>
+  <h1>Iridium ground station</h1>
+  <span class="imei" id="hImei">—</span>
+  <span class="spacer"></span>
+  <span class="imei" id="hClock">—</span>
+  <a class="logout" href="{{ url_for('logout') }}">Sign out</a>
+</header>
+
+<main>
+  <div class="tabs">
+    <button class="tab active" data-p="live">Live</button>
+    <button class="tab" data-p="send">Send</button>
+    <button class="tab" data-p="log">Messages</button>
+    <button class="tab" data-p="cfg">Settings</button>
+  </div>
+
+  <!-- ============================ LIVE ============================ -->
+  <section id="live" class="pane active">
+    <div id="notConfigured" class="note bad" style="display:none">
+      RockBLOCK credentials are not set yet. Open <b>Settings</b> and enter your
+      Ground Control username, password and the device IMEI before sending.
+    </div>
+
+    <div class="cards">
+      <div class="card"><div class="k">Last heard</div>
+        <div class="v" id="cLastHeard">—</div><div class="s" id="cLastHeardAbs">no messages yet</div></div>
+      <div class="card"><div class="k">Received (MO)</div>
+        <div class="v" id="cMo">0</div><div class="s">from the device</div></div>
+      <div class="card"><div class="k">Sent (MT)</div>
+        <div class="v" id="cMt">0</div><div class="s">queued to the device</div></div>
+      <div class="card"><div class="k">Last position</div>
+        <div class="v" id="cPos" style="font-size:1rem">—</div>
+        <div class="s" id="cCep">Iridium estimate</div></div>
+      <div class="card"><div class="k">MQTT</div>
+        <div class="v" id="cMqtt" style="font-size:1rem">—</div>
+        <div class="s" id="cMqttSub">bridge</div></div>
+    </div>
+
+    <div class="panel">
+      <h2>Latest message from the device</h2>
+      <div id="lastMoBox" class="muted">Nothing received yet.</div>
+    </div>
+
+    <div class="panel">
+      <h2>Webhook</h2>
+      <p class="cc">Set this as the <b>HTTP POST</b> delivery address in RockBLOCK Core
+         (Ground Control portal → your device → Delivery Groups):</p>
+      <p><code id="hookUrl">—</code></p>
+      <p class="cc">It must be reachable from the public internet and answer within
+         3 seconds, or Ground Control retries with a doubling backoff for about
+         six days.</p>
+    </div>
+  </section>
+
+  <!-- ============================ SEND ============================ -->
+  <section id="send" class="pane">
+    <div class="panel">
+      <h2>Send a message to the RockBLOCK</h2>
+      <div class="note info">
+        This queues a mobile-terminated message. The modem collects it on its
+        <b>next session</b> — when it next transmits, or when a ring alert makes
+        it check in. It is not instant, and <b>every send costs Iridium credits</b>.
+      </div>
+
+      <label for="mtText">Message</label>
+      <textarea id="mtText" placeholder="type the message for the device…"></textarea>
+      <div class="cc"><span id="mtCount">0</span> / {{ mt_max }} bytes
+        <span id="mtWarn" class="warn"></span></div>
+
+      <div class="row">
+        <button id="btnSend">Send to device</button>
+        <span class="cc" id="sendMsg"></span>
+      </div>
+      <div id="sendResult"></div>
+    </div>
+  </section>
+
+  <!-- ========================== MESSAGES ========================== -->
+  <section id="log" class="pane">
+    <div class="panel">
+      <h2>Message history</h2>
+      <div class="tblwrap">
+        <table>
+          <thead><tr>
+            <th>When</th><th>Dir</th><th>Message</th><th>Bytes</th><th>Status</th>
+          </tr></thead>
+          <tbody id="tblBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================== SETTINGS ========================== -->
+  <section id="cfg" class="pane">
+    <div class="panel">
+      <h2>RockBLOCK account</h2>
+      <p class="cc">Your Ground Control portal login. Stored on this server and used
+         only to call the RockBLOCK MT endpoint.</p>
+
+      <label for="sUser">Username</label>
+      <input id="sUser" autocomplete="off">
+
+      <label for="sPass">Password</label>
+      <input id="sPass" type="password" placeholder="unchanged — leave blank to keep">
+
+      <label for="sImei">Device IMEI</label>
+      <input id="sImei" inputmode="numeric" autocomplete="off"
+             placeholder="15 digits, from the RockBLOCK label">
+      <p class="cc">The webhook rejects messages from any other IMEI.</p>
+
+      <h2 style="margin-top:22px">MQTT bridge <span id="mqBadge" class="cc"></span></h2>
+      <p class="cc">Publishes every message in both directions to a broker, and can
+         optionally accept messages to send.</p>
+
+      <label><input type="checkbox" id="mqOn" style="width:auto;margin-right:8px">
+        Enable MQTT</label>
+
+      <label for="mqHost">Broker host</label>
+      <input id="mqHost" autocomplete="off" placeholder="broker.example.com or 127.0.0.1">
+
+      <label for="mqPort">Port</label>
+      <input id="mqPort" inputmode="numeric" placeholder="1883 (8883 for TLS)">
+
+      <label for="mqUser">Username <span class="cc">(blank if the broker is open)</span></label>
+      <input id="mqUser" autocomplete="off">
+
+      <label for="mqPass">Password</label>
+      <input id="mqPass" type="password" placeholder="unchanged — leave blank to keep">
+
+      <label><input type="checkbox" id="mqTls" style="width:auto;margin-right:8px">
+        Use TLS</label>
+
+      <label for="mqBase">Base topic</label>
+      <input id="mqBase" autocomplete="off" placeholder="iridium">
+      <div id="mqTopics" class="cc" style="margin-top:8px"></div>
+
+      <label style="margin-top:16px">
+        <input type="checkbox" id="mqAllow" style="width:auto;margin-right:8px">
+        Allow sending <b>from</b> MQTT</label>
+      <div class="note bad" id="mqWarn" style="display:none">
+        With this on, anything that can publish to the <code id="mqSendTopic">send</code>
+        topic can transmit to your device and <b>spend Iridium credits</b>. Only enable
+        it on a broker you control and that requires authentication.
+      </div>
+
+      <h2 style="margin-top:22px">This console</h2>
+      <label for="sAdmin">Change sign-in password</label>
+      <input id="sAdmin" type="password" placeholder="leave blank to keep">
+
+      <div class="row">
+        <button id="btnSave">Save settings</button>
+        <span class="cc" id="cfgMsg"></span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const MT_MAX = {{ mt_max }}, DEVICE_SHOWS = {{ device_shows }};
+// Mount point, so every call works whether the app is served at / or proxied
+// under a sub-path such as /iridium/. Never hard-code a leading slash below.
+const BASE = {{ url_for('index')|tojson }};
+const api = p => BASE.replace(/\/$/, '') + '/' + p;
+const $ = s => document.querySelector(s);
+
+// ---- tabs ----
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.pane').forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+  $('#' + t.dataset.p).classList.add('active');
+  if (t.dataset.p === 'cfg') loadSettings();
+});
+
+// ---- helpers ----
+const esc = s => (s ?? '').toString().replace(/[&<>"]/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function ago(unix) {
+  if (!unix) return '—';
+  let s = Math.floor(Date.now()/1000 - unix);
+  if (s < 60)    return s + 's ago';
+  if (s < 3600)  return Math.floor(s/60) + 'm ago';
+  if (s < 86400) return Math.floor(s/3600) + 'h ago';
+  return Math.floor(s/86400) + 'd ago';
+}
+const stamp = u => u ? new Date(u*1000).toLocaleString() : '';
+
+// UTF-8 byte length, because the limit is bytes and not characters.
+const byteLen = s => new TextEncoder().encode(s).length;
+
+// ---- live ----
+async function refresh() {
+  let r;
+  try { r = await (await fetch(api('api/state'))).json(); }
+  catch (e) { return; }
+  if (r.error) return;
+
+  $('#hImei').textContent = r.imei ? 'IMEI ' + r.imei : 'IMEI not set';
+  $('#hClock').textContent = r.server_time + ' UTC';
+  $('#hookUrl').textContent = r.webhook_url;
+  $('#notConfigured').style.display = r.configured ? 'none' : 'block';
+
+  $('#cMo').textContent = r.mo_total;
+  $('#cMt').textContent = r.mt_total;
+
+  const q = r.mqtt || {};
+  $('#cMqtt').innerHTML = !q.enabled ? '<span class="muted">off</span>'
+    : q.connected ? '<span style="color:#7fd8a8">connected</span>'
+                  : '<span style="color:#ff8fa3">offline</span>';
+  $('#cMqttSub').textContent = !q.enabled ? 'bridge disabled'
+    : (q.host || '?') + ':' + (q.port || '') + (q.allow_send ? ' · send armed' : '');
+
+  const mo = r.last_mo;
+  $('#cLastHeard').textContent = mo ? ago(mo.created_at) : '—';
+  $('#cLastHeardAbs').textContent = mo ? stamp(mo.created_at) : 'no messages yet';
+
+  if (mo && mo.lat != null && mo.lon != null) {
+    $('#cPos').innerHTML = '<a style="color:#9cc4ff" target="_blank" rel="noopener"'
+      + ' href="https://www.openstreetmap.org/?mlat=' + mo.lat + '&mlon=' + mo.lon
+      + '#map=10/' + mo.lat + '/' + mo.lon + '">'
+      + mo.lat.toFixed(3) + ', ' + mo.lon.toFixed(3) + '</a>';
+    $('#cCep').textContent = mo.cep != null ? '±' + mo.cep + ' km (Iridium estimate)'
+                                            : 'Iridium estimate';
+  }
+
+  $('#lastMoBox').innerHTML = mo
+    ? '<div class="msg">' + (mo.text ? esc(mo.text) : '<i class="muted">binary payload</i>')
+      + '</div><div class="hex">' + esc(mo.hex) + '</div>'
+      + '<div class="cc" style="margin-top:8px">MOMSN ' + esc(mo.momsn)
+      + ' · ' + mo.nbytes + ' bytes · ' + esc(mo.transmit_time) + ' UTC</div>'
+    : '<span class="muted">Nothing received yet.</span>';
+
+  const rows = r.messages.map(m => {
+    const failed = m.status === 'failed';
+    return '<tr>'
+      + '<td>' + stamp(m.created_at) + '<div class="cc">' + ago(m.created_at) + '</div></td>'
+      + '<td><span class="dir ' + m.direction + '">' + m.direction + '</span></td>'
+      + '<td><div class="msg">' + (m.text ? esc(m.text)
+            : '<i class="muted">binary</i>') + '</div>'
+        + '<div class="hex">' + esc(m.hex) + '</div></td>'
+      + '<td>' + (m.nbytes ?? '') + '</td>'
+      + '<td' + (failed ? ' class="fail"' : '') + '>' + esc(m.status)
+        + (m.detail ? '<div class="cc">' + esc(m.detail) + '</div>' : '') + '</td>'
+      + '</tr>';
+  }).join('');
+  $('#tblBody').innerHTML = rows || '<tr><td colspan="5" class="muted">No messages.</td></tr>';
+}
+
+// ---- send ----
+$('#mtText').addEventListener('input', () => {
+  const n = byteLen($('#mtText').value);
+  $('#mtCount').textContent = n;
+  $('#mtWarn').textContent =
+      n > MT_MAX        ? '· over the ' + MT_MAX + '-byte limit'
+    : n > DEVICE_SHOWS  ? '· over ' + DEVICE_SHOWS + ' bytes, the device only displays the first ' + DEVICE_SHOWS
+    : '';
+});
+
+$('#btnSend').onclick = async () => {
+  const text = $('#mtText').value.trim();
+  if (!text) return;
+  const n = byteLen(text);
+  if (n > MT_MAX) { $('#sendResult').innerHTML =
+      '<div class="note bad">Too long: ' + n + ' bytes, limit ' + MT_MAX + '.</div>'; return; }
+  if (!confirm('Send ' + n + ' bytes to the device?\n\nThis costs Iridium credits.')) return;
+
+  $('#btnSend').disabled = true;
+  $('#sendMsg').textContent = 'contacting RockBLOCK…';
+  $('#sendResult').innerHTML = '';
+  try {
+    const res = await fetch(api('api/send'), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ text })
+    });
+    const j = await res.json();
+    if (res.ok) {
+      $('#sendResult').innerHTML = '<div class="note good">Queued as MT id <b>'
+        + esc(j.mtid) + '</b> (' + j.bytes + ' bytes). The modem will collect it on its next session.'
+        + (j.truncated_on_device
+            ? ' <br>Note: over ' + DEVICE_SHOWS + ' bytes, so the device will only display the first '
+              + DEVICE_SHOWS + '.' : '')
+        + '</div>';
+      $('#mtText').value = ''; $('#mtCount').textContent = '0'; $('#mtWarn').textContent = '';
+    } else {
+      $('#sendResult').innerHTML = '<div class="note bad">' + esc(j.error) + '</div>';
+    }
+  } catch (e) {
+    $('#sendResult').innerHTML = '<div class="note bad">Request failed: ' + esc(e.message) + '</div>';
+  }
+  $('#btnSend').disabled = false;
+  $('#sendMsg').textContent = '';
+  refresh();
+};
+
+// ---- settings ----
+async function loadSettings() {
+  const s = await (await fetch(api('api/settings'))).json();
+  $('#sUser').value = s.rockblock_user || '';
+  $('#sImei').value = s.imei || '';
+  $('#sPass').placeholder = s.has_password ? 'unchanged — leave blank to keep'
+                                           : 'not set';
+  $('#mqOn').checked    = !!s.mqtt_enabled;
+  $('#mqHost').value    = s.mqtt_host || '';
+  $('#mqPort').value    = s.mqtt_port || '1883';
+  $('#mqUser').value    = s.mqtt_user || '';
+  $('#mqTls').checked   = !!s.mqtt_tls;
+  $('#mqBase').value    = s.mqtt_base || 'iridium';
+  $('#mqAllow').checked = !!s.mqtt_allow_send;
+  $('#mqPass').placeholder = s.mqtt_has_password ? 'unchanged — leave blank to keep'
+                                                 : 'not set';
+  const t = s.mqtt_topics || {};
+  $('#mqTopics').innerHTML =
+      'publishes <code>' + esc(t.mo) + '</code> and <code>' + esc(t.mt) + '</code>'
+    + ', retains <code>' + esc(t.status) + '</code>'
+    + (s.mqtt_allow_send ? ', subscribes <code>' + esc(t.send) + '</code>' : '');
+  $('#mqSendTopic').textContent = t.send || 'send';
+  $('#mqWarn').style.display = s.mqtt_allow_send ? 'block' : 'none';
+
+  $('#mqBadge').innerHTML = !s.mqtt_enabled ? 'disabled'
+    : s.mqtt_connected ? '<span style="color:#7fd8a8">connected</span>'
+    : '<span style="color:#ff8fa3">not connected' +
+      (s.mqtt_error ? ' — ' + esc(s.mqtt_error) : '') + '</span>';
+}
+
+$('#mqAllow').onchange = () =>
+  $('#mqWarn').style.display = $('#mqAllow').checked ? 'block' : 'none';
+
+$('#btnSave').onclick = async () => {
+  const body = {
+    rockblock_user: $('#sUser').value.trim(),
+    imei: $('#sImei').value.trim(),
+    mqtt_enabled:    $('#mqOn').checked,
+    mqtt_host:       $('#mqHost').value.trim(),
+    mqtt_port:       $('#mqPort').value.trim() || '1883',
+    mqtt_user:       $('#mqUser').value.trim(),
+    mqtt_tls:        $('#mqTls').checked,
+    mqtt_base:       $('#mqBase').value.trim() || 'iridium',
+    mqtt_allow_send: $('#mqAllow').checked,
+  };
+  if ($('#mqPass').value)  body.mqtt_pass      = $('#mqPass').value;
+  if ($('#sPass').value)  body.rockblock_pass  = $('#sPass').value;
+  if ($('#sAdmin').value) body.admin_password  = $('#sAdmin').value;
+
+  $('#cfgMsg').textContent = 'saving…';
+  const res = await fetch(api('api/settings'), {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  });
+  $('#cfgMsg').textContent = res.ok ? 'saved ✓' : 'failed';
+  $('#sPass').value = ''; $('#sAdmin').value = ''; $('#mqPass').value = '';
+  setTimeout(() => $('#cfgMsg').textContent = '', 2500);
+  // The broker reconnect happens in the background; give it a moment before
+  // reading back the connection state.
+  setTimeout(loadSettings, 1200);
+  loadSettings(); refresh();
+};
+
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>
