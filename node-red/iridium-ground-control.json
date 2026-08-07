@@ -1,0 +1,232 @@
+[
+  {
+    "id": "iridium.tab.1",
+    "type": "tab",
+    "label": "Iridium Ground Control",
+    "disabled": false,
+    "info": "Receives Mobile Originated messages from Ground Control (RockBLOCK / Iridium SBD).\n\nDelivery address to set in RockBLOCK Core:\n  http://<this-host>:1880/rockblock/mo\n\nGround Control requires HTTP 200 within 3 seconds or it retries with a doubling backoff for about six days, so the response is sent immediately and parsing happens on a separate branch.\n\nSet your IMEI in the 'set imei' node, then Deploy."
+  },
+  {
+    "id": "n_cfg_inj",
+    "type": "inject",
+    "z": "iridium.tab.1",
+    "name": "on start",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "0.1",
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 130,
+    "y": 60,
+    "wires": [
+      [
+        "n_cfg"
+      ]
+    ]
+  },
+  {
+    "id": "n_cfg",
+    "type": "function",
+    "z": "iridium.tab.1",
+    "name": "set imei",
+    "func": "\n// Set your device IMEI here, then Deploy. Leave blank to accept any sender\n// (not recommended - the webhook is publicly reachable).\nflow.set(\"imei\", \"\");\nnode.status({ fill: \"blue\", shape: \"ring\",\n              text: \"imei \" + (flow.get(\"imei\") || \"(any)\") });\nreturn null;\n",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 300,
+    "y": 60,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "n_in",
+    "type": "http in",
+    "z": "iridium.tab.1",
+    "name": "MO webhook",
+    "url": "/rockblock/mo",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 130,
+    "y": 160,
+    "wires": [
+      [
+        "n_ok",
+        "n_parse"
+      ]
+    ]
+  },
+  {
+    "id": "n_ok",
+    "type": "change",
+    "z": "iridium.tab.1",
+    "name": "200 OK",
+    "rules": [
+      {
+        "t": "set",
+        "p": "payload",
+        "pt": "msg",
+        "to": "OK",
+        "tot": "str"
+      },
+      {
+        "t": "set",
+        "p": "statusCode",
+        "pt": "msg",
+        "to": "200",
+        "tot": "num"
+      }
+    ],
+    "action": "",
+    "property": "",
+    "from": "",
+    "to": "",
+    "reg": false,
+    "x": 320,
+    "y": 120,
+    "wires": [
+      [
+        "n_res"
+      ]
+    ]
+  },
+  {
+    "id": "n_res",
+    "type": "http response",
+    "z": "iridium.tab.1",
+    "name": "",
+    "statusCode": "",
+    "headers": {},
+    "x": 490,
+    "y": 120,
+    "wires": []
+  },
+  {
+    "id": "n_parse",
+    "type": "function",
+    "z": "iridium.tab.1",
+    "name": "parse MO",
+    "func": "\n// Ground Control MO delivery (HTTP_JSON or form-encoded).\n//\n// Fields: imei, serial, momsn, transmit_time, iridium_latitude,\n//         iridium_longitude, iridium_cep, data (HEX), JWT\n//\n// The docs do not state whether numbers arrive as JSON numbers or as strings,\n// and the form-encoded delivery type sends strings, so coerce everything\n// rather than reading values directly.\n\nconst src = msg.payload || {};\n\nconst num = v => { const n = parseFloat(v); return isNaN(n) ? null : n; };\nconst int = v => { const n = parseInt(v, 10); return isNaN(n) ? null : n; };\n\nconst imei = String(src.imei || \"\").trim();\nif (!imei) {\n    node.warn(\"MO delivery with no imei - ignored\");\n    return null;\n}\n\n// The endpoint is public by necessity, so refuse anything that is not the\n// configured device. Set the IMEI in the \"config\" node at the top of the flow.\nconst expected = String(flow.get(\"imei\") || \"\").trim();\nif (expected && imei !== expected) {\n    node.warn(\"rejected MO from unexpected imei \" + imei);\n    return null;\n}\n\n// data is hex-encoded; decode it only if the result is printable text,\n// otherwise keep the hex and treat it as binary telemetry.\nlet text = null, nbytes = 0;\nconst hex = String(src.data || \"\");\nif (hex) {\n    const buf = Buffer.from(hex, \"hex\");\n    nbytes = buf.length;\n    const s = buf.toString(\"utf8\");\n    if (/^[\\x20-\\x7E\\r\\n\\t]*$/.test(s)) { text = s; }\n}\n\nconst rec = {\n    imei: imei,\n    momsn: int(src.momsn),\n    text: text,\n    hex: hex,\n    nbytes: nbytes,\n    lat: num(src.iridium_latitude),\n    lon: num(src.iridium_longitude),\n    cep: num(src.iridium_cep),\n    transmit_time: src.transmit_time || \"\",\n    received_at: new Date().toISOString()\n};\n\n// Keep the most recent 100 in flow context.\nconst hist = flow.get(\"mo_history\") || [];\nhist.unshift(rec);\nif (hist.length > 100) { hist.length = 100; }\nflow.set(\"mo_history\", hist);\nflow.set(\"mo_count\", (flow.get(\"mo_count\") || 0) + 1);\n\nnode.status({ fill: \"green\", shape: \"dot\",\n              text: (text || hex).substring(0, 24) + \"  #\" + rec.momsn });\n\nmsg.topic = \"iridium/mo\";\nmsg.payload = rec;\nreturn msg;\n",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 330,
+    "y": 200,
+    "wires": [
+      [
+        "n_dbg"
+      ]
+    ]
+  },
+  {
+    "id": "n_dbg",
+    "type": "debug",
+    "z": "iridium.tab.1",
+    "name": "message",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 520,
+    "y": 200,
+    "wires": []
+  },
+  {
+    "id": "n_test",
+    "type": "inject",
+    "z": "iridium.tab.1",
+    "name": "test: fake a delivery",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "payload": "{\"imei\": \"300234060000000\", \"momsn\": 101, \"transmit_time\": \"26-08-07 13:05:00\", \"iridium_latitude\": 13.7563, \"iridium_longitude\": 100.5018, \"iridium_cep\": 3, \"data\": \"534f53206e65656420617373697374616e6365\"}",
+    "payloadType": "json",
+    "x": 160,
+    "y": 260,
+    "wires": [
+      [
+        "n_parse"
+      ]
+    ]
+  },
+  {
+    "id": "n_hist_in",
+    "type": "http in",
+    "z": "iridium.tab.1",
+    "name": "GET messages",
+    "url": "/rockblock/messages",
+    "method": "get",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 140,
+    "y": 340,
+    "wires": [
+      [
+        "n_hist"
+      ]
+    ]
+  },
+  {
+    "id": "n_hist",
+    "type": "function",
+    "z": "iridium.tab.1",
+    "name": "history",
+    "func": "\n// Serve the stored messages as JSON for a quick look in a browser.\nmsg.payload = {\n    count: flow.get(\"mo_count\") || 0,\n    imei: flow.get(\"imei\") || null,\n    messages: flow.get(\"mo_history\") || []\n};\nreturn msg;\n",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 330,
+    "y": 340,
+    "wires": [
+      [
+        "n_hist_res"
+      ]
+    ]
+  },
+  {
+    "id": "n_hist_res",
+    "type": "http response",
+    "z": "iridium.tab.1",
+    "name": "",
+    "statusCode": "200",
+    "headers": {},
+    "x": 500,
+    "y": 340,
+    "wires": []
+  },
+  {
+    "id": "n_note",
+    "type": "comment",
+    "z": "iridium.tab.1",
+    "name": "Set your IMEI in 'set imei', then Deploy",
+    "info": "Delivery address for RockBLOCK Core:\n    http://<host>:1880/rockblock/mo\n\nView what has arrived:\n    http://<host>:1880/rockblock/messages\n\nThe 200 is sent on its own branch so parsing can never push the response past Ground Control's 3-second limit.\n\n'data' is hex-encoded. It is decoded to text only when the result is printable, otherwise the hex is kept as-is.",
+    "x": 220,
+    "y": 20,
+    "wires": []
+  }
+]
