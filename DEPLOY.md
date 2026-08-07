@@ -114,6 +114,44 @@ sudo certbot renew --dry-run
 
 ## 3. Add the reverse proxy
 
+There are two ways to expose it. **A subdomain is much simpler** and is the
+recommended one — a sub-path needs the prefix headers below and has to coexist
+with whatever else already serves that domain.
+
+### 3a. Subdomain (recommended)
+
+**DNS first.** Add an `A` record for `iridium.<your-domain>` pointing at the
+same IP as the apex. Check it before touching the proxy, because Caddy cannot
+obtain a certificate until it resolves:
+
+```sh
+dig +short iridium.<your-domain>          # must return your server's IP
+```
+
+**Plain Caddy** — a whole new site block, nothing else to think about:
+
+```caddy
+iridium.<your-domain> {
+    reverse_proxy iridium-web:8899
+}
+```
+
+**caddy-docker-proxy** — no config file at all, just labels on this stack.
+Uncomment them in `docker-compose.yml`, set the hostname, `docker compose up -d`.
+
+Nothing else is needed: the app serves happily at `/`, so there is no path to
+strip and no `X-Forwarded-Prefix`. Caddy sets `X-Forwarded-Proto` itself, which
+is all the app needs to know it is behind TLS. The certificate is issued
+automatically on first request.
+
+```sh
+curl -s https://iridium.<your-domain>/healthz     # expect: ok
+```
+
+### 3b. Sub-path under an existing domain
+
+
+
 `nginx/iridium.conf` in this repo is a complete server block. **If certbot has
 already written a server block for <your-host> — which it will have — do not
 add a second one.** Copy only the two `location` blocks (`/iridium/` and

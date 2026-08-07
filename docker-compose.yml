@@ -34,6 +34,17 @@ services:
       ROCKBLOCK_IMEI: "${ROCKBLOCK_IMEI:-}"
     volumes:
       - iridium_data:/data
+    # If your reverse proxy is caddy-docker-proxy (image
+    # lucaslorentz/caddy-docker-proxy), it builds its config from labels and
+    # ignores any Caddyfile. Uncomment these, set the hostname, and it
+    # configures itself — including the TLS certificate:
+    #
+    # labels:
+    #   caddy: iridium.example.com
+    #   caddy.reverse_proxy: "{{upstreams 8899}}"
+    #
+    # With a plain Caddy, leave them commented and add the site block from
+    # DEPLOY.md instead.
     networks:
       - default
       # Shared network with a FIXED name so a reverse proxy running in another
