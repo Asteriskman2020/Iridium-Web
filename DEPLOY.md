@@ -16,7 +16,39 @@ Ports on this host: `80` nginx · `443` nginx (TLS) · `8889` OTA server ·
 
 ---
 
-## 1. Deploy the stack in Portainer
+## 1. Deploy
+
+Either route works. The shell route is fewer moving parts if you already have a
+terminal on the host.
+
+### 1a. From a shell (docker compose)
+
+```sh
+cd /opt
+sudo git clone https://github.com/Asteriskman2020/Iridium-Web.git
+cd Iridium-Web
+
+sudo cp .env.example .env
+sudo nano .env            # set SECRET_KEY and ADMIN_PASSWORD
+
+sudo docker compose up -d --build
+sudo docker compose ps
+curl -s http://127.0.0.1:8890/healthz     # expect: ok
+```
+
+If you left `ADMIN_PASSWORD` blank, read the generated one out of the log:
+
+```sh
+sudo docker compose logs iridium-web | grep -A2 "Generated a random one"
+```
+
+Updating later:
+
+```sh
+cd /opt/Iridium-Web && sudo git pull && sudo docker compose up -d --build
+```
+
+### 1b. From Portainer
 
 1. Open `https://<vps-ip>:9443` and sign in.
 2. **Stacks → Add stack**, name it `iridium-web`.
@@ -24,16 +56,28 @@ Ports on this host: `80` nginx · `443` nginx (TLS) · `8889` OTA server ·
    * Repository URL: `https://github.com/Asteriskman2020/Iridium-Web`
    * Reference: `refs/heads/main`
    * Compose path: `docker-compose.yml`
-   * The repo is **private**, so switch on **Authentication** and give your
-     GitHub username plus a personal access token with `repo` scope.
+   * The repo is public, so leave **Authentication** off.
 4. Under **Environment variables**:
 
    | Name | Value |
    |---|---|
-   | `SECRET_KEY` | `<paste a fresh random string>` |
-   | `ADMIN_PASSWORD` | something only you know — **pick something only you know** |
+   | `SECRET_KEY` | a fresh random string — `python3 -c "import secrets; print(secrets.token_hex(32))"` |
+   | `ADMIN_PASSWORD` | something only you know, or leave blank for a generated one |
 
 5. **Deploy the stack.**
+
+**Lost the Portainer admin password?** Reset it from a shell on the host — this
+stops Portainer, runs the official helper against its data volume, and prints a
+new password:
+
+```sh
+sudo docker stop portainer
+sudo docker run --rm -v portainer_data:/data portainer/helper-reset-password
+sudo docker start portainer
+```
+
+Check the volume name first with `docker volume ls | grep portainer`; it is
+`portainer_data` on a default install but differs if it was deployed as a stack.
 
 Leave `ROCKBLOCK_USER` / `ROCKBLOCK_PASS` / `ROCKBLOCK_IMEI` empty — those go in
 the app's Settings tab, so the password never lands in a compose file or in

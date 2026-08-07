@@ -12,18 +12,22 @@ services:
       # reachable even when ufw says the port is closed.
       - "127.0.0.1:8890:8899"
     environment:
-      # Sessions are invalidated if this changes. Set a real random string.
-      SECRET_KEY: "CHANGE-ME-to-a-long-random-string"
+      # Values come from a .env file beside this one, or from Portainer's stack
+      # environment variables — never edited into this file, which is public.
+      # Sessions are invalidated if SECRET_KEY changes; the :? makes compose
+      # refuse to start rather than silently run with a random per-boot key.
+      SECRET_KEY: "${SECRET_KEY:?set SECRET_KEY in .env}"
+      # Blank is allowed: the app then generates a random console password and
+      # prints it once to the container log.
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
       # Marks the session cookie Secure — only correct behind TLS.
-      BEHIND_TLS: "true"
-      # First-run console password; changeable afterwards in Settings.
-      ADMIN_PASSWORD: ""
+      BEHIND_TLS: "${BEHIND_TLS:-true}"
       DB_PATH: /data/iridium.db
-      # Optional seeds — these can be left empty and filled in via Settings,
-      # which keeps the RockBLOCK password out of the compose file.
-      ROCKBLOCK_USER: ""
-      ROCKBLOCK_PASS: ""
-      ROCKBLOCK_IMEI: ""
+      # Optional seeds. Leave unset and fill them in on the Settings page, which
+      # keeps the RockBLOCK password off the disk entirely.
+      ROCKBLOCK_USER: "${ROCKBLOCK_USER:-}"
+      ROCKBLOCK_PASS: "${ROCKBLOCK_PASS:-}"
+      ROCKBLOCK_IMEI: "${ROCKBLOCK_IMEI:-}"
     volumes:
       - iridium_data:/data
 
