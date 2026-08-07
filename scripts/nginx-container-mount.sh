@@ -80,12 +80,29 @@ else
 fi
 
 # ---- 3. locate the config file that owns the :80 server block --------------
+# Which CONTAINER port is published as host :80? It is not necessarily 80.
+# A container published as 0.0.0.0:80->8080/tcp serves the internet from its
+# `listen 8080` block, so editing `listen 80` — and self-testing against
+# 127.0.0.1:80 — succeeds locally and is invisible from outside.
+CPORT=$(docker inspect "$NGX" --format '{{json .NetworkSettings.Ports}}' \
+  | python3 -c "
+import json,sys
+try: d=json.load(sys.stdin) or {}
+except Exception: d={}
+for cp,binds in d.items():
+    for b in (binds or []):
+        if str(b.get('HostPort'))=='80':
+            print(cp.split('/')[0]); sys.exit()
+" 2>/dev/null)
+[ -z "$CPORT" ] && CPORT=80
+echo "  host :80 maps to container port : $CPORT"
+
 # Track the current file from nginx -T's markers, print the one that first
-# declares a port-80 listener. Uses sub() rather than a substr() offset —
+# declares a listener on THAT port. Uses sub() rather than a substr() offset —
 # counting the prefix by hand silently truncates the path.
-CONF=$(docker exec "$NGX" nginx -T 2>/dev/null | awk '
+CONF=$(docker exec "$NGX" nginx -T 2>/dev/null | awk -v p="$CPORT" '
   /^# configuration file /{f=$0; sub(/^# configuration file /,"",f); sub(/:$/,"",f)}
-  /listen[ \t]+(\[::\]:)?80([ \t;]|$)/{if(f!=""){print f; exit}}')
+  $0 ~ ("listen[ \t]+(\\[::\\]:)?" p "([ \t;]|$)"){if(f!=""){print f; exit}}')
 [ -z "$CONF" ] && { echo "✗ no port-80 server block found inside $NGX"; exit 1; }
 echo "  config inside container: $CONF"
 
@@ -128,46 +145,69 @@ if [ "$DRY" = 1 ]; then
 fi
 
 # ---- 4. edit (host file if possible, else inside the container) -----------
-py_edit() {  # $1 = file path on host
-  BLOCK="$BLOCK" MARK="$MARK" DOMAIN="$DOMAIN" REMOVE="$REMOVE" FORCE="$FORCE" \
-  python3 - "$1" <<'PY'
-import os, re, shutil, sys, time
-path=sys.argv[1]; BLOCK=os.environ["BLOCK"]; MARK=os.environ["MARK"]
-REMOVE=os.environ["REMOVE"]=="1"; FORCE=os.environ["FORCE"]=="1"
+# Pull the file out, edit it properly on the host with python, push it back.
+# `docker cp` writes through a bind mount, so this one path covers both the
+# mounted and unmounted cases, and gives real server-block selection instead of
+# "first server { in the file" — which is how a mount lands in a block that
+# never answers for the site.
+command -v python3 >/dev/null || { echo "✗ python3 required on the host"; exit 1; }
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+docker cp "$NGX:$CONF" "$TMP/conf" >/dev/null
+cp "$TMP/conf" "$TMP/conf.orig"
+
+BLOCK="$BLOCK" MARK="$MARK" DOMAIN="$DOMAIN" CPORT="$CPORT" \
+REMOVE="$REMOVE" FORCE="$FORCE" python3 - "$TMP/conf" <<'PY'
+import os, re, sys
+path=sys.argv[1]
+BLOCK=os.environ["BLOCK"]; MARK=os.environ["MARK"]; DOMAIN=os.environ["DOMAIN"]
+CPORT=os.environ["CPORT"]; REMOVE=os.environ["REMOVE"]=="1"; FORCE=os.environ["FORCE"]=="1"
 t=open(path,encoding="utf-8",errors="replace").read()
 rx=re.compile(r"\n?[ \t]*# --- "+re.escape(MARK)+r" ---.*?# --- end "+re.escape(MARK)+r" ---\n?",re.S)
-shutil.copy2(path,f"{path}.iridium-{time.strftime('%Y%m%d%H%M%S')}.bak")
-if REMOVE or FORCE: t=rx.sub("",t)
+if REMOVE or FORCE:
+    t=rx.sub("",t)
 if REMOVE:
     open(path,"w",encoding="utf-8").write(t); print("  removed"); sys.exit(0)
-if MARK in t: print("  already present"); sys.exit(0)
-m=re.search(r"\bserver\s*\{",t)
-if not m: print("  ✗ no server block"); sys.exit(1)
-open(path,"w",encoding="utf-8").write(t[:m.end()]+BLOCK+"\n"+t[m.end():])
-print("  inserted")
-PY
-}
+if MARK in t:
+    print("  already present (use --force to re-target)"); sys.exit(0)
 
-if [ -n "$HOSTCONF" ] && [ -f "$HOSTCONF" ]; then
-  command -v python3 >/dev/null || { echo "✗ python3 required on the host"; exit 1; }
-  py_edit "$HOSTCONF"
-else
-  docker exec "$NGX" cp "$CONF" "$CONF.bak"
-  if [ "$REMOVE" = 1 ] || [ "$FORCE" = 1 ]; then
-    docker exec "$NGX" sh -c "sed -i '/# --- $MARK ---/,/# --- end $MARK ---/d' '$CONF'"
-  fi
-  [ "$REMOVE" = 1 ] || docker exec -i "$NGX" sh -c \
-    "awk -v b=\"\$(cat)\" 'NR==1{p=0} /server[ \t]*\{/&&!p{print;print b;p=1;next}{print}' '$CONF' > /tmp/n && cp /tmp/n '$CONF'" <<<"$BLOCK"
-fi
+def blocks(text):
+    for m in re.finditer(r"\bserver\s*\{", text):
+        d,i=1,m.end()
+        while i<len(text) and d:
+            if text[i]=="{": d+=1
+            elif text[i]=="}": d-=1
+            i+=1
+        if d==0: yield m.end(), text[m.end():i-1]
+
+cands=[]
+for start,body in blocks(t):
+    ls=re.findall(r"^\s*listen\s+([^;]+);", body, re.M)
+    if not any(re.search(r"(^|[:\] ])"+re.escape(CPORT)+r"(\s|$)", l) for l in ls):
+        continue
+    names=" ".join(re.findall(r"^\s*server_name\s+([^;]+);", body, re.M)).strip()
+    if   DOMAIN and DOMAIN in names.split():          s=4
+    elif DOMAIN and DOMAIN in names:                  s=3
+    elif any("default_server" in l for l in ls):      s=2
+    elif names in ("","_"):                           s=1
+    else:                                             s=0
+    cands.append((s,start,names or "(none)"))
+if not cands:
+    print(f"  ✗ no server block listening on {CPORT} in this file"); sys.exit(1)
+cands.sort(key=lambda c:-c[0])
+for s,_,n in cands: print(f"      score {s}  server_name: {n}")
+s,at,names=cands[0]
+print(f"  -> inserting into the block with server_name: {names}")
+open(path,"w",encoding="utf-8").write(t[:at]+BLOCK+"\n"+t[at:])
+PY
+rc=$?
+[ $rc -ne 0 ] && exit $rc
+docker cp "$TMP/conf" "$NGX:$CONF" >/dev/null
+docker cp "$TMP/conf.orig" "$NGX:$CONF.iridium.bak" >/dev/null 2>&1 || true
 
 # ---- 5. validate, reload, prove ------------------------------------------
 if ! docker exec "$NGX" nginx -t >/dev/null 2>&1; then
   echo "  ✗ nginx rejected the config — restoring"
-  if [ -n "$HOSTCONF" ] && [ -f "$HOSTCONF" ]; then
-    cp "$(ls -t "$HOSTCONF".iridium-*.bak | head -1)" "$HOSTCONF"
-  else
-    docker exec "$NGX" cp "$CONF.bak" "$CONF"
-  fi
+  docker cp "$TMP/conf.orig" "$NGX:$CONF" >/dev/null
   docker exec "$NGX" nginx -t || true
   exit 1
 fi
@@ -178,9 +218,10 @@ echo "  ✓ reloaded"
 
 sleep 1
 HOST_HDR=${DOMAIN:-localhost}
+# Test the port the internet actually lands on, not port 80 by habit.
 OUT=$(docker exec "$NGX" sh -c \
-  "wget -q -O- --timeout=8 --header='Host: $HOST_HDR' http://127.0.0.1$PREFIX/healthz 2>/dev/null \
-   || curl -s --max-time 8 -H 'Host: $HOST_HDR' http://127.0.0.1$PREFIX/healthz 2>/dev/null" || true)
+  "wget -q -O- --timeout=8 --header='Host: $HOST_HDR' http://127.0.0.1:$CPORT$PREFIX/healthz 2>/dev/null \
+   || curl -s --max-time 8 -H 'Host: $HOST_HDR' http://127.0.0.1:$CPORT$PREFIX/healthz 2>/dev/null" || true)
 echo
 if [ "$(echo "$OUT" | tr -d '[:space:]')" = "ok" ]; then
   echo "  PASS — http://$HOST_HDR$PREFIX/healthz returns 'ok' through the public nginx"
