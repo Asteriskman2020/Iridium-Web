@@ -61,14 +61,55 @@ if [ -z "${PROXY:-}" ]; then
 fi
 grn "✓ reverse proxy looks like: $PROXY"
 
-# ---- 3. attach it ----------------------------------------------------------
-if docker inspect "$PROXY" --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' \
-     | tr ' ' '\n' | grep -qx "$NET"; then
-  grn "✓ $PROXY is already on $NET"
+# ---- 3. attach ------------------------------------------------------------
+# Direction matters for caddy-docker-proxy: it only ingests containers that sit
+# on one of ITS networks (further restricted by CADDY_INGRESS_NETWORKS if set).
+# Putting the proxy on our network is not enough — we have to join its network.
+PROXY_NETS=$(docker inspect "$PROXY" \
+  --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}')
+INGRESS=$(docker inspect "$PROXY" --format '{{json .Config.Env}}' 2>/dev/null \
+  | tr ',' '\n' | grep -i 'CADDY_INGRESS_NETWORKS' | sed 's/.*=//; s/"//g' || true)
+
+echo "  proxy networks : $PROXY_NETS"
+[ -n "$INGRESS" ] && bold "  CADDY_INGRESS_NETWORKS=$INGRESS"
+
+# Prefer an ingress network if one is declared, else the proxy's first network
+# that is not the default bridge.
+TARGET=""
+if [ -n "$INGRESS" ]; then
+  TARGET=$(echo "$INGRESS" | tr ',' '\n' | head -1 | tr -d ' ')
 else
-  docker network connect "$NET" "$PROXY"
-  grn "✓ connected $PROXY to $NET"
+  for n in $PROXY_NETS; do
+    [ "$n" = "bridge" ] || [ "$n" = "host" ] || [ "$n" = "none" ] || { TARGET=$n; break; }
+  done
 fi
+[ -z "$TARGET" ] && TARGET=$(echo "$PROXY_NETS" | awk '{print $1}')
+
+if docker inspect "$APP" --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' \
+     | tr ' ' '\n' | grep -qx "$TARGET"; then
+  grn "✓ $APP is already on $TARGET"
+else
+  docker network connect "$TARGET" "$APP"
+  grn "✓ connected $APP to $TARGET  (this is the direction that matters)"
+fi
+
+# Belt and braces: also put the proxy on ours, harmless if unused.
+if ! docker inspect "$PROXY" --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' \
+       | tr ' ' '\n' | grep -qx "$NET"; then
+  docker network connect "$NET" "$PROXY" 2>/dev/null \
+    && grn "✓ also connected $PROXY to $NET" || true
+fi
+
+# ---- 3b. what did the proxy actually generate? -----------------------------
+echo
+bold "Labels caddy-docker-proxy can see on $APP:"
+docker inspect "$APP" --format '{{json .Config.Labels}}' | tr ',' '\n' \
+  | grep -i caddy | sed 's/^/    /' || red "    NONE — did you include -f docker-compose.caddy.yml ?"
+
+echo
+bold "Generated Caddyfile (from $PROXY logs):"
+docker logs "$PROXY" --tail 200 2>&1 | grep -iA30 'new caddyfile' | tail -32 | sed 's/^/    /' \
+  || echo "    (nothing logged yet)"
 
 # ---- 4. prove the proxy can actually reach the app -------------------------
 echo
