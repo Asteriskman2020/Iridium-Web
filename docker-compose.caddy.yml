@@ -1,0 +1,43 @@
+# Overlay for hosts whose reverse proxy is lucaslorentz/caddy-docker-proxy.
+#
+# That image generates its entire configuration from Docker labels and ignores
+# any Caddyfile, so editing one appears to do nothing at all. Use this instead:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d
+#
+# Set CADDY_SITE (and optionally CADDY_PATH) in .env first.
+#
+# Caddy must also share a network with this container so it can reach it:
+#   sudo ./scripts/connect-proxy.sh
+#
+# ---------------------------------------------------------------------------
+# Sub-path mode (default): https://$CADDY_SITE/iridium/
+#
+# Labels from several containers naming the same site are merged into one site
+# block. That is safe here: Caddy orders handle_path ahead of a bare
+# reverse_proxy, and a handle block is terminal, so /iridium/* is served by us
+# and everything else still falls through to whatever already serves the site.
+#
+# For a SUBDOMAIN instead (https://iridium.example.com), it is simpler — set
+# CADDY_SITE=iridium.example.com, add the DNS record, and replace the three
+# handle_path labels below with a single:
+#     caddy.reverse_proxy: "{{upstreams 8899}}"
+# No path stripping and no X-Forwarded-Prefix are needed in that case.
+
+services:
+  iridium-web:
+    labels:
+      caddy: "${CADDY_SITE:?set CADDY_SITE in .env, e.g. example.com}"
+
+      # handle_path strips the prefix before forwarding, so the app still sees
+      # /healthz, /login and so on at its own root.
+      caddy.handle_path: "${CADDY_PATH:-/iridium}/*"
+
+      # {{upstreams 8899}} resolves to this container's address on the shared
+      # network, on its INTERNAL port — not the 8890 host mapping, which a
+      # proxy running in a container cannot reach.
+      caddy.handle_path.reverse_proxy: "{{upstreams 8899}}"
+
+      # Hands the prefix back so the app generates /iridium/login rather than
+      # /login. Caddy sets X-Forwarded-Proto/For/Host by itself.
+      caddy.handle_path.reverse_proxy.header_up: "X-Forwarded-Prefix ${CADDY_PATH:-/iridium}"
