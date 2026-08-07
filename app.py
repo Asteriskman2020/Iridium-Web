@@ -68,6 +68,38 @@ app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
 # http, since TLS is terminated at nginx.
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
+
+class PrefixMiddleware:
+    """
+    Serve the whole app under a fixed sub-path.
+
+    Needed when the proxy forwards the prefix intact and does not send
+    X-Forwarded-Prefix — nginx-proxy's VIRTUAL_PATH behaves exactly that way.
+    Setting SCRIPT_NAME (rather than rewriting routes) is what makes url_for(),
+    redirects and request.url_root all come out prefixed, so the webhook URL the
+    dashboard prints is the real one.
+    """
+
+    def __init__(self, wsgi_app, prefix):
+        self.wsgi_app = wsgi_app
+        self.prefix = "/" + prefix.strip("/")
+
+    def __call__(self, environ, start_response):
+        path = environ.get("PATH_INFO", "")
+        if path == self.prefix or path.startswith(self.prefix + "/"):
+            environ["SCRIPT_NAME"] = self.prefix
+            environ["PATH_INFO"] = path[len(self.prefix):] or "/"
+        return self.wsgi_app(environ, start_response)
+
+
+# Set URL_PREFIX only when the proxy does NOT strip the prefix. Leave it unset
+# behind a proxy that does (nginx proxy_pass with a trailing slash, Caddy
+# handle_path, or nginx-proxy with VIRTUAL_DEST=/), or the prefix is applied
+# twice and every route 404s.
+URL_PREFIX = os.environ.get("URL_PREFIX", "").strip()
+if URL_PREFIX and URL_PREFIX != "/":
+    app.wsgi_app = PrefixMiddleware(app.wsgi_app, URL_PREFIX)
+
 # Only send the session cookie over HTTPS when we are actually behind TLS.
 if os.environ.get("BEHIND_TLS", "").lower() in ("1", "true", "yes"):
     app.config.update(SESSION_COOKIE_SECURE=True)

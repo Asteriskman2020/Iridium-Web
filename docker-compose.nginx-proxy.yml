@@ -1,0 +1,34 @@
+# Overlay for hosts whose reverse proxy is nginx-proxy
+# (github.com/nginx-proxy/nginx-proxy, image often just called "nginx-proxy").
+#
+# That image REGENERATES its whole nginx config from container environment
+# variables on every Docker event, so hand-editing its config files does
+# nothing — the edit is either ignored or overwritten on the next event, with
+# no error. Routing is declared here instead.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.nginx-proxy.yml up -d
+#
+# Set IRIDIUM_HOST (and optionally IRIDIUM_PATH) in .env first, then make sure
+# the two containers share a network:
+#
+#   sudo ./scripts/connect-proxy.sh
+#
+# VIRTUAL_PATH forwards the prefix INTACT and nginx-proxy does not send
+# X-Forwarded-Prefix, so the app has to serve under the prefix itself — that is
+# what URL_PREFIX does. The two must agree.
+#
+# (The alternative is VIRTUAL_DEST=/ which strips the prefix; then leave
+# URL_PREFIX unset. Do not do both, or the prefix is applied twice.)
+#
+# VIRTUAL_PATH needs nginx-proxy 1.0+. On an older build only whole-hostname
+# routing exists: drop VIRTUAL_PATH and URL_PREFIX and give it its own
+# hostname via VIRTUAL_HOST.
+
+services:
+  iridium-web:
+    environment:
+      VIRTUAL_HOST: "${IRIDIUM_HOST:?set IRIDIUM_HOST in .env, e.g. example.com}"
+      VIRTUAL_PATH: "${IRIDIUM_PATH:-/iridium}/"
+      # The CONTAINER port. nginx-proxy defaults to 80, which is not us.
+      VIRTUAL_PORT: "8899"
+      URL_PREFIX: "${IRIDIUM_PATH:-/iridium}"
